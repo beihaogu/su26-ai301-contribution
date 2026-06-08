@@ -9,7 +9,7 @@
 
 ## Why I Chose This Issue
 
-[1-2 paragraphs explaining why this issue interests you, how it matches your skills/learning goals, what you hope to learn]
+I chose this issue from lychee, a fast Rust-based link checker, because it has clear scope: the underlying --host-stats feature already exists, and the maintainer has explicitly identified what needs to be added (a summary line showing total domains and links checked). My background in Rust through CSE 231 (compilers) gives me the language familiarity needed, and the issue is small enough to complete in 2-3 weeks while still touching real user-facing functionality. The maintainer is active (last interaction in March 2025) and has marked this as good first issue with detailed guidance in the comments, which reduces ambiguity for a first contribution.
 
 ---
 
