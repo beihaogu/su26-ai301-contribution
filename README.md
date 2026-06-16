@@ -1,9 +1,9 @@
 # Contribution [#]: [Issue Title]
 
-**Contribution Number:** [1 / 2 / 3]  
-**Student:** [Your Name]  
-**Issue:** [GitHub issue link]  
-**Status:** [Phase I / Phase II / Phase III / Phase IV] [In Progress / Complete]
+**Contribution Number:** 1
+**Student:** Beihao Gu
+**Issue:** https://github.com/lycheeverse/lychee/issues/1998
+**Status:** Phase II In Progress
 
 ---
 
