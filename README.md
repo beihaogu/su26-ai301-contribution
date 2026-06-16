@@ -6,7 +6,7 @@
 
 **Issue:** https://github.com/lycheeverse/lychee/issues/1998
 
-**Status:** Phase II In Progress
+**Status:** Phase II Completed 
 
 ---
 
