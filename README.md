@@ -1,8 +1,11 @@
-# Contribution [#]: [Issue Title]
+# Contribution [1]: Domain-grouped summary of checked links
 
 **Contribution Number:** 1
+
 **Student:** Beihao Gu
+
 **Issue:** https://github.com/lycheeverse/lychee/issues/1998
+
 **Status:** Phase II In Progress
 
 ---
