@@ -20,19 +20,31 @@ I chose this issue from lychee, a fast Rust-based link checker, because it has c
 
 ### Problem Description
 
-[In your own words, what's broken or missing?]
+lychee currently prints a run-level summary (totals across all checked links: OK,
+errors, redirects, etc.), but it does not break those totals down per domain. When a
+run covers hundreds of links across many external hosts, users cannot quickly see
+which domains dominate the link set or whether failures cluster on a single host.
 
 ### Expected Behavior
 
-[What should happen?]
+A new opt-in CLI flag (`--domain-summary`, with a short form like `-D`) should print a
+"Domain Summary" section after the existing stats block. It should list each unique
+domain with the count of links checked against it and a per-status breakdown
+(e.g. `[✓ 65, ✗ 2]`). For runs with many domains it should default to a top-N view
+and support `all` plus a `--domain-summary-min` threshold flag.
 
 ### Current Behavior
 
-[What actually happens?]
+Running `cargo run -- <inputs>` prints the standard summary (Total / OK / Errors Excluded / Timeouts / etc.) with no per-domain grouping. There is no `--domain-summary`
+flag in `lychee --help`.
 
 ### Affected Components
 
-[Which parts of the codebase are involved?]
+- `lychee-bin/src/options.rs` — CLI flag definition (clap)
+- `lychee-bin/src/stats.rs` — `ResponseStats` aggregation
+- `lychee-bin/src/formatters/stats/` — rendering of the summary block (plain, JSON,
+  markdown variants)
+- `lychee-bin/tests/cli.rs` — integration tests for CLI flag behavior
 
 ---
 
@@ -40,19 +52,42 @@ I chose this issue from lychee, a fast Rust-based link checker, because it has c
 
 ### Environment Setup
 
-[Notes on setting up your local development environment - challenges you faced, how you solved them]
+Cloned my fork and built locally with the standard Rust toolchain (no devcontainer in
+this repo, plain Cargo workspace):
+```bash
+git clone https://github.com/beihaogu/lychee.git
+cd lychee
+cargo build
+cargo test
+```
+The build succeeded on the first attempt on macOS with a current stable Rust
+toolchain — no system dependency issues to document. `cargo test` passes against
+`main` before any of my changes, which gives me a clean baseline to compare against.
 
 ### Steps to Reproduce
 
-1. [Step 1]
-2. [Step 2]
-3. [Observed result]
+Because #1998 is a feature request rather than a bug, "reproducing" here means
+confirming the feature is absent and capturing the current summary output as a
+baseline.
+
+1. From the repo root, run lychee against a small fixture with several distinct
+   domains:
+```bash
+   cargo run -- --no-progress fixtures/TEST_HTML5.html
+```
+2. Observe the printed summary block. It contains run-level totals (Total, OK,
+   Errors, Excluded, Timeouts, Unknown, Redirected) but no per-domain breakdown.
+3. Run `cargo run -- --help | grep -i domain`. There is no `--domain-summary` flag,
+   confirming the feature does not exist.
+4. **Expected (after my change):** A `Domain Summary` section appears below the
+   existing summary when `--domain-summary` is passed.
+5. **Actual (today):** No such section, no such flag.
 
 ### Reproduction Evidence
-
-- **Commit showing reproduction:** [Link to commit in your fork]
-- **Screenshots/logs:** [If applicable]
-- **My findings:** [What you discovered during reproduction]
+- **Working branch:** https://github.com/beihaogu/lychee/tree/feat-issue-1998-domain-summary
+- **Baseline help output:** [notes/baseline-help.txt](https://github.com/beihaogu/lychee/blob/feat-issue-1998-domain-summary/notes/baseline-help.txt) — `grep -i domain` returns no matches, confirming `--domain-summary` does not exist on `main`.
+- **Baseline summary output:** [notes/baseline-output.txt](https://github.com/beihaogu/lychee/blob/feat-issue-1998-domain-summary/notes/baseline-output.txt) — shows the current summary block (Total / OK / Errors / Excluded / Timeouts / Unknown / Redirected) with no per-domain breakdown.
+- **My findings:** The feature is absent as described. The `Response` objects already carry full `Uri`s, so the data needed for grouping is reachable from `ResponseStats::add` without plumbing changes — only aggregation and rendering need to be added.
 
 ---
 
@@ -60,30 +95,60 @@ I chose this issue from lychee, a fast Rust-based link checker, because it has c
 
 ### Analysis
 
-[Your analysis of the root cause - what's causing the issue?]
+The current `ResponseStats` struct already aggregates `Response`s into per-status
+buckets. Each `Response` carries the full `Uri`, which exposes `host()`. So the data
+needed for a domain breakdown already flows through the stats pipeline; nothing new
+needs to be plumbed end-to-end. The work is (a) add a `domain_stats: HashMap<String,
+PerDomainStats>` field, (b) populate it in `ResponseStats::add`, (c) gate rendering
+on the new CLI flag, and (d) implement the three formatter variants (text, JSON,
+markdown).
 
 ### Proposed Solution
 
-[High-level description of your fix approach]
+Add an opt-in `--domain-summary` flag and an aggregation field on `ResponseStats`.
+When the flag is set, render a new section after the existing summary in each
+formatter. Default to "top 10 domains by count"; accept `all` or `top:N` as values;
+add a `--domain-summary-min N` threshold flag.
 
 ### Implementation Plan
 
-Using UMPIRE framework (adapted):
+**Understand:** lychee should optionally print a per-domain breakdown of checked
+links after the run-level summary, with status counts per domain and a configurable
+display limit.
 
-**Understand:** [Restate the problem]
+**Match:** `ResponseStats` already groups responses by `Status` using `HashMap`s
+keyed on category. The new per-domain map follows the same pattern, just keyed on
+`uri.host_str()` instead of status. The existing `--verbose` / `--mode` style flags
+in `options.rs` are the template for the new clap flags.
 
-**Match:** [What similar patterns/solutions exist in the codebase?]
+**Plan:**
+1. Add `domain_summary: Option<DomainSummaryMode>` (None / Top(usize) / All) and
+   `domain_summary_min: Option<usize>` to `lychee-bin/src/options.rs`, with clap
+   derive annotations matching the issue's suggested CLI shape.
+2. Add `domain_stats: HashMap<String, DomainCounts>` to `ResponseStats` in
+   `lychee-bin/src/stats.rs`, where `DomainCounts` holds totals and per-status
+   counts.
+3. Update `ResponseStats::add` (or equivalent ingest point) to update
+   `domain_stats` using `response.uri().host_str()`. Skip entries with no host
+   (mailto, file paths) — they should not appear in the domain summary.
+4. Add a `format_domain_summary` helper in `lychee-bin/src/formatters/stats/` and
+   call it from the plain, JSON, and markdown formatters when the flag is set.
+   Plain text matches the format in the issue body; JSON always includes the full
+   map regardless of display limits.
+5. Add CLI integration tests in `lychee-bin/tests/cli.rs` covering: flag off
+   (baseline unchanged), flag on (section appears), `--domain-summary=all`,
+   `--domain-summary-min`, JSON output shape.
 
-**Plan:** [Step-by-step implementation plan]
-1. [Modify file X to do Y]
-2. [Add function Z]
-3. [Update tests]
+**Implement:** branch `feat-issue-1998-domain-summary` on my fork — see link above.
 
-**Implement:** [Link to your branch/commits as you work]
+**Review:** Before opening the PR I will re-read `CONTRIBUTING.md`, run
+`cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and `cargo test`, and
+follow the project's commit-message convention (conventional commits / present
+tense) based on recent merged PRs.
 
-**Review:** [Self-review checklist - does it follow the project's contribution guidelines?]
-
-**Evaluate:** [How will you verify it works?]
+**Evaluate:** The new integration tests must pass; the existing test suite must
+continue to pass; manual run against a fixture with ~5 distinct domains must
+produce a summary matching the format in the issue body.
 
 ---
 
