@@ -6,8 +6,7 @@
 
 **Issue:** https://github.com/lycheeverse/lychee/issues/1998
 
-**Status:** Phase II Completed 
-
+**Status:** Phase III Completed
 ---
 
 ## Why I Chose This Issue
@@ -154,38 +153,80 @@ produce a summary matching the format in the issue body.
 
 ## Testing Strategy
 
-### Unit Tests
 
-- [ ] Test case 1: [Description]
-- [ ] Test case 2: [Description]
-- [ ] Test case 3: [Description]
+### Snapshot Tests Updated
 
-### Integration Tests
+- ✅ `formatters::stats::compact::tests::test_formatter` — embeds the compact host-stats block; expected string updated to `📊 Per-host Statistics (1 domains, 5 links checked)` (the dummy fixture uses one host with five requests).
+- ✅ `formatters::stats::detailed::tests::test_detailed_formatter` — same update for the detailed formatter.
 
-- [ ] Integration scenario 1
-- [ ] Integration scenario 2
+The markdown host-stats formatter has no existing snapshot test in `host_stats/markdown.rs`; the change there is exercised end-to-end by `cargo run --bin lychee -- --host-stats --format markdown`.
+
+### Regression Check
+
+Ran the full workspace test suite after the change:
+
+```bash
+cargo test
+```
+
+Result: all binary, library, and integration suites pass with no unrelated failures (78 unit tests in `lychee-bin` alone). Static checks also pass:
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+```
 
 ### Manual Testing
 
-[What you tested manually and results]
+Ran the modified binary against the lychee README, which references ~23 unique domains across ~113 link checks:
+
+```bash
+cargo run --bin lychee -- --no-progress --host-stats README.md
+```
+
+Observed output now starts with:
+
+```
+📊 Per-host Statistics (23 domains, 113 links checked)
+```
+
+Compared against the baseline captured in `notes/baseline-output.txt` (bare `📊 Per-host Statistics`), confirming the change behaves as intended on real input.
 
 ---
 
 ## Implementation Notes
 
-### Week [X] Progress
+### Week 1 Progress (Jun 17–23)
 
-[What you built this week, challenges faced, decisions made]
+**What I built:**
 
-### Week [Y] Progress
+- Added the summary line `(N domains, M links checked)` to the `📊 Per-host Statistics` header in all three host-stats formatters: compact, detailed, and markdown.
+- `N` = number of unique hosts (length of `HostStatsMap::sorted()`).
+- `M` = sum of `HostStats::total_requests` across all hosts.
+- Updated two embedded snapshot tests in `formatters/stats/` so they include the new header substring.
+- Refactored `host_stats/compact.rs` to call `HostStatsMap::sorted()` once instead of three times.
 
-[Continue documenting as you work]
+**Engineering decisions:**
+
+- **Reused `--host-stats` instead of introducing `--domain-summary`.** The original issue proposed a new flag, but maintainer comments on Jan 25–26 redirected the work onto the existing `--host-stats` feature, with `mre` explicitly noting that the summary line was the cheap, high-value piece. Introducing a parallel flag would have duplicated semantics.
+- **Used `total_requests` as the "links checked" denominator.** The run-level `Total` counter counts every link occurrence across input files (including duplicates), which would have over-represented "links checked per domain." Summing `total_requests` from `HostStatsMap` keeps the summary line consistent with the rows below it.
+- **Did not add singular/plural handling for `1 domain` vs `N domains`.** Kept the output format identical to the example `mre` posted in the issue thread; consistency with the maintainer's spec outweighs a minor grammar nit. Easy to revisit in PR feedback if requested.
+- **Reduced redundant `sorted()` calls in `compact.rs`.** Each call clones the entire underlying `HashMap` and re-sorts. The other two formatters already cached the result in a local; this brings `compact.rs` in line with that pattern.
+
+### Challenges Faced
+
+The non-obvious blocker was that the only failing tests after my change lived in `formatters/stats/` (the **stats** module), not in `formatters/host_stats/` (the module I actually edited). The stats formatters build their final output by embedding the host-stats block via `format!("{response_stats}\n{host_stats}")`, so the snapshot strings asserted in `stats/compact.rs::test_formatter` and `stats/detailed.rs::test_detailed_formatter` included the per-host header verbatim. Once I located the right files and updated the expected strings to include `(1 domains, 5 links checked)` (matching the dummy fixture of one host with five requests), both tests passed. This was a useful first-hand lesson in how snapshot tests propagate coupling across modules in a Rust codebase — the test that fails isn't always in the file you changed.
 
 ### Code Changes
 
-- **Files modified:** [List]
-- **Key commits:** [Links to important commits]
-- **Approach decisions:** [Why you chose certain approaches]
+- **Files modified:**
+  - `lychee-bin/src/formatters/host_stats/compact.rs`
+  - `lychee-bin/src/formatters/host_stats/detailed.rs`
+  - `lychee-bin/src/formatters/host_stats/markdown.rs`
+  - `lychee-bin/src/formatters/stats/compact.rs` (snapshot test expectation)
+  - `lychee-bin/src/formatters/stats/detailed.rs` (snapshot test expectation)
+- **Key commit:** `feat(host-stats): add domain/link count summary to per-host stats header` on branch [`feat-issue-1998-domain-summary`](https://github.com/beihaogu/lychee/tree/feat-issue-1998-domain-summary).
+- **Branch:** https://github.com/beihaogu/lychee/tree/feat-issue-1998-domain-summary
 
 ---
 
