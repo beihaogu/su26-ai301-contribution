@@ -6,7 +6,7 @@
 
 **Issue:** https://github.com/lycheeverse/lychee/issues/1998
 
-**Status:** Phase III Completed
+**Status:** Phase IV Completed
 ---
 
 ## Why I Chose This Issue
@@ -232,15 +232,15 @@ The non-obvious blocker was that the only failing tests after my change lived in
 
 ## Pull Request
 
-**PR Link:** [GitHub PR URL when submitted]
+**PR Link:** https://github.com/lycheeverse/lychee/pull/2251
 
-**PR Description:** [Draft or final PR description - much of the content above can be adapted]
+**PR Description:** Adds `(N domains, M links checked)` to the `📊 Per-host Statistics` header in all three `--host-stats` formatters (compact, detailed, markdown), addressing the summary-line piece of #1998 flagged by maintainer `@mre` as "pretty quick to add." Also includes a drive-by refactor to reduce `HostStatsMap::sorted()` from three calls to one in `host_stats/compact.rs`.
 
 **Maintainer Feedback:**
-- [Date]: [Summary of feedback received]
-- [Date]: [How you addressed it]
+- *(None yet)*
 
-**Status:** [Awaiting review / Iterating / Approved / Merged]
+
+**Status:** Awaiting review
 
 ---
 
@@ -248,20 +248,28 @@ The non-obvious blocker was that the only failing tests after my change lived in
 
 ### Technical Skills Gained
 
-[What you learned technically]
+- End-to-end open-source contribution flow: fork, clone, branch, implement, test, rebase, PR, tag reviewer.
+- Practical Rust exposure inside a real workspace (`lychee-bin` calling into `lychee-lib`'s ratelimit / host-stats module), including how formatter selection (compact / detailed / markdown) is layered on top of a shared `HostStatsMap`.
+- Reading and updating Rust snapshot tests that assert against a whole formatted string, including tests that live in a *sibling* module because one formatter embeds another's output via `format!("{a}\n{b}")`.
+- Reading a maintainer thread carefully enough to descope a feature request: the original issue proposed a new flag with modes and thresholds, but by the time I picked it up, the maintainers had already redirected the work onto a single summary line. Recognizing that and matching the actual ask (rather than the original ask) was the single most useful skill this contribution taught me.
+- `git rebase upstream/master` in a live repo where a fresh upstream PR touched the same files I did, resolved cleanly with tests still green.
 
 ### Challenges Overcome
 
-[What was hard and how you solved it]
+- **Locating the failing test.** After my first change, the only failing tests lived in `formatters/stats/` (the *stats* module), not in `formatters/host_stats/` where I actually edited. Tracing the `format!("{response_stats}\n{host_stats}")` composition in `stats/compact.rs::format()` made the embedding relationship obvious. This was a useful first-hand lesson in how snapshot tests propagate coupling across module boundaries.
+- **Debugging a suspicious-looking test diff.** At one point the failure output made it look like an unrelated column's whitespace had shifted, which sent me down a wrong path. Getting unstuck required stepping back and re-reading the panic string carefully, since the diff was actually smaller than it appeared. Lesson: when a test failure looks impossibly broad, re-verify the diff character-by-character before hypothesizing complicated causes.
+- **Rebasing on upstream that had touched the same snapshot tests.** Upstream PR #2243 added an IGNORED-links row to the same `stats/{compact,detailed}.rs` expected strings I had updated. The three-way merge produced a clean result but I still had to run the whole test suite to be sure.
 
 ### What I'd Do Differently Next Time
 
-[Reflection on your process]
+- Read the *entire* issue thread, including maintainer back-and-forth on scope, before writing a Phase II plan. My initial plan proposed a full new flag with mode/threshold options because I anchored on the original reporter's wording; only after re-reading the maintainer comments did I realize the actual ask had been pared down to just the header summary line. Earlier scope clarification would have made Phase II more accurate.
 
 ---
 
 ## Resources Used
 
-- [Link to helpful documentation]
-- [Tutorial or Stack Overflow post that helped]
-- [GitHub issues or discussions that helped]
+- Issue thread: https://github.com/lycheeverse/lychee/issues/1998 (especially `@mre` and `@thomas-zahner` scope-narrowing comments on Jan 25 and 26, 2026)
+- lychee `CONTRIBUTING.md` (build/test workflow reference)
+- `lychee-lib/src/ratelimit/host/stats.rs` (`HostStatsMap::sorted()` definition, critical to knowing what data was already accessible in the formatter layer)
+- Existing formatters as style reference: patterns in `detailed.rs` and `markdown.rs` reused when refactoring `compact.rs`
+- Claude Code (Rust codebase navigation, snapshot-test diff diagnosis)
