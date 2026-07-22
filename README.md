@@ -278,7 +278,7 @@ The non-obvious blocker was that the only failing tests after my change lived in
 **Contribution Number:** 2
 **Student:** Beihao Gu
 **Issue:** https://github.com/lycheeverse/lychee/issues/2142
-**Status:** Phase I Complete
+**Status:** Phase II Complete
 
 ---
 
@@ -292,19 +292,47 @@ I chose this issue because it improves the user experience by making excluded li
 
 ### Problem Description
 
-[In your own words, what's broken or missing?]
+When lychee excludes a link, its verbose output reports only the generic message
+`This is due to your 'exclude' values`. That message does not identify which of
+several `--exclude` regular expressions matched. It is also misleading for links
+that were excluded for a built-in reason, such as mail checking being disabled.
+As a result, users must manually compare every excluded URL against every rule to
+debug their configuration.
 
 ### Expected Behavior
 
-[What should happen?]
+In verbose mode, each excluded response should explain the specific reason for the
+exclusion. A link matched by a user-provided regular expression should name the
+original pattern (for example, `wikipedia\.org`). A mail link
+excluded because mail checking is off should instead say
+`Excluded: mail checking is disabled (use --include-mail to enable)`. The final
+summary should continue to report only the aggregate Excluded count so normal
+non-verbose output remains compact.
 
 ### Current Behavior
 
-[What actually happens?]
+All excluded links receive the same status details, regardless of whether they
+matched different user patterns or were skipped by built-in filtering. With three
+separate `--exclude` values, the Wikipedia URL, license image, example-domain URLs,
+and both mail addresses all print the identical generic explanation. The status
+therefore preserves the fact that a link was excluded but loses why it was
+excluded.
 
 ### Affected Components
 
-[Which parts of the codebase are involved?]
+- `lychee-lib/src/types/status.rs` — defines the unit variant
+  `Status::Excluded` and its current generic `details()` text.
+- `lychee-lib/src/filter/regex_filter.rs` — wraps `RegexSet`, but exposes only a
+  boolean `is_match` result and not the original matching expression.
+- `lychee-lib/src/filter/mod.rs` — combines user patterns and built-in exclusion
+  rules into a single boolean `Filter::is_excluded` result.
+- `lychee-lib/src/client.rs` — turns that boolean into `Status::Excluded`, which is
+  where the reason is currently discarded.
+- `lychee-lib/src/checker/mail.rs`, cache/retry code, and
+  `lychee-bin/src/formatters/` — construct or pattern-match `Status::Excluded` and
+  will need mechanical updates if the status begins carrying data.
+- `lychee-bin/tests/cli.rs` and formatter tests — contain the existing generic
+  output expectations and are the appropriate locations for regression coverage.
 
 ---
 
@@ -312,19 +340,75 @@ I chose this issue because it improves the user experience by making excluded li
 
 ### Environment Setup
 
-[Notes on setting up your local development environment - challenges you faced, how you solved them]
+I updated from the canonical repository rather than branching from my previous
+contribution branch, then created a clean issue-specific branch:
+
+```bash
+git fetch upstream master
+git switch -c codex/issue-2142-exclude-reason upstream/master
+cargo build -p lychee
+```
+
+The branch is based on upstream commit `af73b4e0`. The build succeeded with the
+stable Rust toolchain on macOS. One reproduction-specific complication is that the
+current root `lychee.toml` contains `exclude_path = ["benches", "fixtures"]`.
+Therefore, the command copied directly from the issue now skips `fixtures/TEST.md`
+and reports zero inputs. Passing `--config /dev/null` bypasses the repository config
+and allows the fixture to be checked without modifying it.
 
 ### Steps to Reproduce
 
-1. [Step 1]
-2. [Step 2]
-3. [Observed result]
+1. From the repository root, build the current upstream version:
+
+   ```bash
+   cargo build -p lychee
+   ```
+
+2. Run the issue's three exclusion patterns against `fixtures/TEST.md`, using an
+   empty config so the repository-level fixture exclusion does not hide the input:
+
+   ```bash
+   cargo run -p lychee -- \
+     --config /dev/null \
+     --no-progress \
+     --verbose \
+     --exclude 'wikipedia\.org' \
+     --exclude 'licensebuttons\.net' \
+     --exclude 'example\.com' \
+     fixtures/TEST.md
+   ```
+
+3. Observe that the six excluded links all receive the same explanation:
+
+   ```text
+   [EXCLUDED] https://en.wikipedia.org/wiki/Static_program_analysis (at 7:1) | This is due to your 'exclude' values
+   [EXCLUDED] https://licensebuttons.net/p/zero/1.0/88x31.png (at 16:2) | This is due to your 'exclude' values
+   [EXCLUDED] http://example.com/ (at 20:1) | This is due to your 'exclude' values
+   [EXCLUDED] https://example.com/ (at 21:1) | This is due to your 'exclude' values
+   [EXCLUDED] mailto:test@example.com (at 23:1) | This is due to your 'exclude' values
+   [EXCLUDED] mailto:test2@example.com (at 24:8) | This is due to your 'exclude' values
+   ```
+
+4. The expected result is for the first four entries to name their matching
+   regular expression, while the two mail entries explain that mail checking is
+   disabled. The summary totals should remain unchanged.
 
 ### Reproduction Evidence
 
-- **Commit showing reproduction:** [Link to commit in your fork]
-- **Screenshots/logs:** [If applicable]
-- **My findings:** [What you discovered during reproduction]
+- **Working branch:**
+  https://github.com/beihaogu/lychee/tree/codex/issue-2142-exclude-reason
+  (prepared from the latest `upstream/master`; no implementation commit at this
+  phase).
+- **Baseline command/output:** Captured above from commit `af73b4e0`. The excluded
+  lines match the behavior reported in issue #2142. Network errors from the four
+  non-excluded external links are unrelated to the bug; all six relevant links
+  are filtered before any network request.
+- **My findings:** The issue is reproducible. `RegexSet` retains the configured
+  expressions and can identify matching indexes, but `RegexFilter` reduces that
+  information to `bool`. `Filter::is_excluded` then combines user and built-in
+  rules into another `bool`, and `Client::check` constructs the data-less
+  `Status::Excluded`. By the time formatters call `Status::details()`, the original
+  cause is no longer available.
 
 ---
 
@@ -332,24 +416,76 @@ I chose this issue because it improves the user experience by making excluded li
 
 ### Analysis
 
-[Your analysis of the root cause - what's causing the issue?]
+The root cause is information loss between filtering and status formatting. The
+regex crate's `RegexSet::matches` API can return the indexes of all matching
+patterns, and `RegexSet::patterns` retains their original strings. Lychee currently
+uses only `RegexSet::is_match`, so it knows that some expression matched but not
+which one. `Filter::is_excluded` also treats user regexes, disabled mail checking,
+scheme/IP rules, example domains, known false positives, and other built-in cases
+as the same boolean outcome.
+
+`Client::check` maps every true result to the unit variant `Status::Excluded`.
+Finally, `Status::details()` has no data to inspect and returns the hard-coded
+generic sentence. The formatters are not the source of the problem; they already
+render `status.details()`. The reason must be captured in the library before the
+filter result reaches the formatter layer.
 
 ### Proposed Solution
 
-[High-level description of your fix approach]
+Introduce a structured `ExcludeReason` enum and change the status to
+`Status::Excluded(ExcludeReason)`. Add a `matching_pattern` method to `RegexFilter`
+that returns the first matching expression in configuration order. Replace the
+client's boolean-only decision path with an `exclusion_reason` query that returns
+`Option<ExcludeReason>`, while retaining `is_excluded` as a compatibility wrapper
+for callers that need only a boolean.
+
+`Status::details()` can then delegate to `ExcludeReason` for human-readable text.
+The most important precedence rule is that disabled mail checking should be
+reported before a user regex match, matching the issue's example where
+`mailto:test@example.com` also matches `example\.com`. For HTTP example-domain
+links, an explicit user pattern should be reported when both the built-in rule and
+the user rule apply, because the purpose of this feature is to debug the supplied
+`--exclude` values. Existing summary counts, status codes, and cache semantics
+should remain unchanged.
 
 ### Implementation Plan
 
 Using UMPIRE framework (adapted):
 
-**Understand:** [Restate the problem]
+**Understand:** Lychee can tell that a link is excluded but discards the triggering
+rule before creating the response. The task is to preserve that reason through the
+filter/client/status pipeline and expose it in verbose response details without
+making the default summary noisier.
 
-**Match:** [What similar patterns/solutions exist in the codebase?]
+**Match:** `Status` already carries structured data for errors, timeouts, unknown
+mail results, unsupported requests, and cached results, and each variant derives
+its human-readable details from that data. `Status::Excluded(ExcludeReason)` follows
+the same design. The existing plain, color, emoji, task, JSON, and JUnit formatters
+all consume `ResponseBody`/`Status::details()`, so enriching the status should flow
+through those formats without adding formatter-specific filtering logic.
 
-**Plan:** [Step-by-step implementation plan]
-1. [Modify file X to do Y]
-2. [Add function Z]
-3. [Update tests]
+**Plan:**
+1. Define a public, non-exhaustive `ExcludeReason` enum in
+   `lychee-lib/src/types/status.rs`, attach it to `Status::Excluded`, and format
+   clear messages for user patterns, disabled mail checking, and other built-in
+   exclusion categories.
+2. Add `RegexFilter::matching_pattern` using `RegexSet::matches` and
+   `RegexSet::patterns`, returning the first configured pattern that matches.
+3. Add `Filter::exclusion_reason(&Uri) -> Option<ExcludeReason>` and preserve the
+   current inclusion/exclusion precedence. Keep `is_excluded` as a boolean wrapper
+   to avoid unnecessary call-site churn.
+4. Update `Client::check` to construct `Status::Excluded(reason)`. Give other
+   producers, such as disabled compile-time mail support and request chains,
+   explicit fallback reasons.
+5. Update exhaustive matches in cache, retry, statistics, color, and emoji code so
+   behavior and aggregate counts stay unchanged.
+6. Add unit tests for selecting the first matching regex and for reason precedence,
+   plus a CLI regression test covering both a pattern-excluded URL and a mail URL.
+   Update formatter/JSON/JUnit expectations that currently assert the generic text.
+7. Before implementation is considered complete, run `cargo fmt --check`,
+   `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and
+   `cargo test --workspace --all-targets --all-features`, followed by the original
+   reproduction command to compare the before/after output.
 
 **Implement:** [Link to your branch/commits as you work]
 
